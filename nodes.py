@@ -59,7 +59,7 @@ class MaskToConvexMask:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mask": ("MASK",),  # 输入的 MASK
+                "mask": ("MASK",),
             },
         }
     
@@ -68,31 +68,27 @@ class MaskToConvexMask:
     FUNCTION = "generate_convex_mask"
 
     def generate_convex_mask(self, mask):
-        """
-        将输入的 MASK 的凹区域填充为凸区域。
-        
-        参数：
-            mask (torch.Tensor): 输入的 MASK，形状为 (batch_size, height, width)。
-        
-        返回：
-            torch.Tensor: 新的 MASK，形状为 (batch_size, height, width)。
-        """
-        mask_np = mask.squeeze(0).numpy()  # 去掉 batch_size 维度
+        batch_size = mask.shape[0]
+        result_masks = []
 
-        contours, _ = cv2.findContours(
-            mask_np.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        for i in range(batch_size):
+            mask_np = mask[i].numpy()
+            
+            contours, _ = cv2.findContours(
+                (mask_np * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            if len(contours) == 0:
+                result_masks.append(mask[i])
+                continue
+            
+            all_points = np.vstack(contours)
+            hull = cv2.convexHull(all_points)
+            
+            convex_mask = np.zeros_like(mask_np, dtype=np.float32)
+            cv2.fillPoly(convex_mask, [hull], 1.0)
+            
+            result_masks.append(torch.from_numpy(convex_mask))
 
-        if len(contours) == 0:
-            return (mask,)
-
-        all_points = np.vstack(contours)
-        # 计算凸包
-        hull = cv2.convexHull(all_points)
-        # 创建一个空白图像用于绘制凸包
-        convex_mask = np.zeros_like(mask_np, dtype=np.float32)
-        # 填充凸包区域
-        cv2.fillPoly(convex_mask, [hull], 1.0)
-        convex_mask_tensor = torch.from_numpy(convex_mask).unsqueeze(0)  # 添加 batch_size 维度
-
-        return (convex_mask_tensor,)
+        result_tensor = torch.stack(result_masks, dim=0)
+        return (result_tensor,)
